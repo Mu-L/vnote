@@ -83,9 +83,9 @@ QToolBar *ToolBarHelper::setupFileToolBar(MainWindow *p_win, QToolBar *p_toolBar
                                emit VNoteX::getInst().importNotebookRequested();
                            });
 
-        // Import notebook of VNote 2.0.
+        // Import notebook of VNote 2.
         btnMenu->addAction(generateIcon("import_notebook_of_vnote2.svg"),
-                           MainWindow::tr("Import Legacy Notebook Of VNote 2.0"),
+                           MainWindow::tr("Import Legacy Notebook Of VNote 2"),
                            btnMenu,
                            []() {
                                emit VNoteX::getInst().importLegacyNotebookRequested();
@@ -490,6 +490,12 @@ QToolBar *ToolBarHelper::setupSettingsToolBar(MainWindow *p_win, QToolBar *p_too
                         });
 
         menu->addSeparator();
+
+        menu->addAction(MainWindow::tr("%1 Home Page").arg(qApp->applicationDisplayName()),
+                        menu,
+                        []() {
+                            WidgetUtils::openUrlByDesktop(QUrl("https://vnotex.github.io/vnote"));
+                        });
 
         menu->addAction(MainWindow::tr("Feedback And Discussions"),
                         menu,

@@ -7,7 +7,7 @@
 #include <functional>
 
 #include <buffer/buffer.h>
-#include "global.h"
+#include <core/global.h>
 #include "navigationmode.h"
 #include "viewsplit.h"
 #include "viewareasession.h"
@@ -137,6 +137,8 @@ namespace vnotex
 
         void saveSession() const;
 
+        void moveViewWindowOneSplit(ViewSplit *p_split, ViewWindow *p_win, Direction p_direction);
+
     private:
         enum class SplitType
         {
@@ -171,7 +173,7 @@ namespace vnotex
 
         QSharedPointer<ViewWorkspace> createWorkspace();
 
-        void splitViewSplit(ViewSplit *p_split, SplitType p_type);
+        ViewSplit *splitViewSplit(ViewSplit *p_split, SplitType p_type, bool p_cloneViewWindow = true);
 
         QSplitter *tryGetParentSplitter(const QWidget *p_widget) const;
 
@@ -217,6 +219,16 @@ namespace vnotex
         void loadSplitterFromSession(const ViewAreaSession::Node &p_node, QSplitter *p_splitter);
 
         void openViewWindowFromSession(const ViewWindowSession &p_session);
+
+        void focusSplitByDirection(Direction p_direction);
+
+        ViewSplit *findSplitByDirection(ViewSplit *p_split, Direction p_direction);
+
+        SplitType checkSplitType(const QSplitter *p_splitter) const;
+
+        void flashViewSplit(ViewSplit *p_split);
+
+        static SplitType splitTypeOfDirection(Direction p_direction);
 
         QLayout *m_mainLayout = nullptr;
 

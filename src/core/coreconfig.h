@@ -53,6 +53,14 @@ namespace vnotex
             ActivatePreviousTab,
             FocusContentArea,
             OpenWithDefaultProgram,
+            OneSplitLeft,
+            OneSplitDown,
+            OneSplitUp,
+            OneSplitRight,
+            MoveOneSplitLeft,
+            MoveOneSplitDown,
+            MoveOneSplitUp,
+            MoveOneSplitRight,
             MaxShortcut
         };
         Q_ENUM(Shortcut)

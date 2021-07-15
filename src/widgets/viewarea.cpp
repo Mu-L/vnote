@@ -12,13 +12,15 @@
 #include <QApplication>
 #include <QSet>
 #include <QHash>
+#include <QTabBar>
 
 #include "viewwindow.h"
 #include "mainwindow.h"
-#include "events.h"
+#include "propertydefs.h"
 #include <utils/widgetutils.h>
 #include <utils/docsutils.h>
 #include <utils/urldragdroputils.h>
+#include <core/events.h>
 #include <core/vnotex.h>
 #include <core/configmgr.h>
 #include <core/coreconfig.h>
@@ -216,15 +218,13 @@ ViewSplit *ViewArea::createViewSplit(QWidget *p_parent, ID p_viewSplitId)
     auto workspace = createWorkspace();
     m_workspaces.push_back(workspace);
 
-    ID id = p_viewSplitId;
-    if (id == InvalidViewSplitId) {
-        id = m_nextViewSplitId++;
-    } else {
-        Q_ASSERT(p_viewSplitId >= m_nextViewSplitId);
-        m_nextViewSplitId = id + 1;
+    if (p_viewSplitId == InvalidViewSplitId) {
+        p_viewSplitId = m_nextViewSplitId++;
+    } else if (p_viewSplitId >= m_nextViewSplitId) {
+        m_nextViewSplitId = p_viewSplitId + 1;
     }
 
-    auto split = new ViewSplit(m_workspaces, workspace, id, p_parent);
+    auto split = new ViewSplit(m_workspaces, workspace, p_viewSplitId, p_parent);
     connect(split, &ViewSplit::viewWindowCloseRequested,
             this, [this](ViewWindow *p_win) {
                 closeViewWindow(p_win, false, true);
@@ -276,6 +276,8 @@ ViewSplit *ViewArea::createViewSplit(QWidget *p_parent, ID p_viewSplitId)
                     }
                 }
             });
+    connect(split, &ViewSplit::moveViewWindowOneSplitRequested,
+            this, &ViewArea::moveViewWindowOneSplit);
     return split;
 }
 
@@ -314,7 +316,18 @@ void ViewArea::addFirstViewSplit()
 void ViewArea::postFirstViewSplit()
 {
     Q_ASSERT(!m_splits.isEmpty());
-    setCurrentViewSplit(m_splits.first(), false);
+    auto currentSplit = m_splits.first();
+    // Check if any split has focus. If there is any, then set it as current split.
+    auto focusWidget = QApplication::focusWidget();
+    if (focusWidget) {
+        for (const auto &split : m_splits) {
+            if (split == focusWidget || split->isAncestorOf(focusWidget)) {
+                currentSplit = split;
+                break;
+            }
+        }
+    }
+    setCurrentViewSplit(currentSplit, false);
 
     emit viewSplitsCountChanged();
     checkCurrentViewWindowChange();
@@ -372,7 +385,6 @@ void ViewArea::removeViewSplit(ViewSplit *p_split, bool p_removeWorkspace)
             unwrapSplitter(splitter);
         }
     } else {
-        Q_ASSERT(m_splits.isEmpty());
         m_mainLayout->removeWidget(p_split);
         if (!m_splits.isEmpty()) {
             newCurrentSplit = m_splits.first();
@@ -427,6 +439,9 @@ void ViewArea::setCurrentViewSplit(ViewSplit *p_split, bool p_focus)
 {
     Q_ASSERT(!p_split || m_splits.contains(p_split));
     if (p_split == m_currentSplit) {
+        if (p_split && p_focus) {
+            p_split->focus();
+        }
         return;
     }
 
@@ -492,14 +507,14 @@ QSharedPointer<ViewWorkspace> ViewArea::createWorkspace()
     return QSharedPointer<ViewWorkspace>::create(id);
 }
 
-void ViewArea::splitViewSplit(ViewSplit *p_split, SplitType p_type)
+ViewSplit *ViewArea::splitViewSplit(ViewSplit *p_split, SplitType p_type, bool p_cloneViewWindow)
 {
     Q_ASSERT(p_split);
     // Create the new split.
     auto newSplit = createViewSplit(this);
 
     // Clone a ViewWindow for the same buffer to display in the new split.
-    {
+    if (p_cloneViewWindow) {
         auto win = p_split->getCurrentViewWindow();
         if (win) {
             auto buffer = win->getBuffer();
@@ -545,6 +560,8 @@ void ViewArea::splitViewSplit(ViewSplit *p_split, SplitType p_type)
 
     emit viewSplitsCountChanged();
     checkCurrentViewWindowChange();
+
+    return newSplit;
 }
 
 QSplitter *ViewArea::createSplitter(Qt::Orientation p_orientation, QWidget *p_parent) const
@@ -826,6 +843,50 @@ void ViewArea::setupShortcuts()
                         } else {
                             setFocus();
                         }
+                    });
+        }
+    }
+
+    // OneSplitLeft.
+    {
+        auto shortcut = WidgetUtils::createShortcut(coreConfig.getShortcut(CoreConfig::OneSplitLeft), this);
+        if (shortcut) {
+            connect(shortcut, &QShortcut::activated,
+                    this, [this]() {
+                        focusSplitByDirection(Direction::Left);
+                    });
+        }
+    }
+
+    // OneSplitDown.
+    {
+        auto shortcut = WidgetUtils::createShortcut(coreConfig.getShortcut(CoreConfig::OneSplitDown), this);
+        if (shortcut) {
+            connect(shortcut, &QShortcut::activated,
+                    this, [this]() {
+                        focusSplitByDirection(Direction::Down);
+                    });
+        }
+    }
+
+    // OneSplitUp.
+    {
+        auto shortcut = WidgetUtils::createShortcut(coreConfig.getShortcut(CoreConfig::OneSplitUp), this);
+        if (shortcut) {
+            connect(shortcut, &QShortcut::activated,
+                    this, [this]() {
+                        focusSplitByDirection(Direction::Up);
+                    });
+        }
+    }
+
+    // OneSplitRight.
+    {
+        auto shortcut = WidgetUtils::createShortcut(coreConfig.getShortcut(CoreConfig::OneSplitRight), this);
+        if (shortcut) {
+            connect(shortcut, &QShortcut::activated,
+                    this, [this]() {
+                        focusSplitByDirection(Direction::Right);
                     });
         }
     }
@@ -1231,4 +1292,152 @@ void ViewArea::openViewWindowFromSession(const ViewWindowSession &p_session)
     paras->m_alwaysNewWindow = true;
 
     emit VNoteX::getInst().openFileRequested(p_session.m_bufferPath, paras);
+}
+
+void ViewArea::focusSplitByDirection(Direction p_direction)
+{
+    auto split = findSplitByDirection(m_currentSplit, p_direction);
+    if (!split) {
+        qWarning() << "failed to focus split by direction";
+        return;
+    }
+
+    setCurrentViewSplit(split, true);
+    flashViewSplit(split);
+}
+
+ViewSplit *ViewArea::findSplitByDirection(ViewSplit *p_split, Direction p_direction)
+{
+    if (!p_split) {
+        return nullptr;
+    }
+
+    QWidget *widget = p_split;
+    const auto targetSplitType = splitTypeOfDirection(p_direction);
+    int splitIdx = 0;
+
+    QSplitter *targetSplitter = nullptr;
+    while (true) {
+        auto splitter = tryGetParentSplitter(widget);
+        if (!splitter) {
+            return nullptr;
+        }
+
+        if (checkSplitType(splitter) == targetSplitType) {
+            targetSplitter = splitter;
+            splitIdx = splitter->indexOf(widget);
+            break;
+        } else {
+            widget = splitter;
+        }
+    }
+
+    Q_ASSERT(targetSplitter);
+    switch (p_direction) {
+    case Direction::Left:
+        --splitIdx;
+        break;
+
+    case Direction::Right:
+        ++splitIdx;
+        break;
+
+    case Direction::Up:
+        --splitIdx;
+        break;
+
+    case Direction::Down:
+        ++splitIdx;
+        break;
+    }
+
+    if (splitIdx < 0 || splitIdx >= targetSplitter->count()) {
+        return nullptr;
+    }
+
+    auto targetWidget = targetSplitter->widget(splitIdx);
+    // Find first split from targetWidget.
+    while (true) {
+        auto splitter = dynamic_cast<QSplitter *>(targetWidget);
+        if (splitter) {
+            if (splitter->count() == 0) {
+                // Should not be an empty splitter.
+                Q_ASSERT(false);
+                return nullptr;
+            }
+            targetWidget = splitter->widget(0);
+        } else {
+            auto viewSplit = dynamic_cast<ViewSplit *>(targetWidget);
+            Q_ASSERT(viewSplit);
+            return viewSplit;
+        }
+    }
+}
+
+ViewArea::SplitType ViewArea::checkSplitType(const QSplitter *p_splitter) const
+{
+    return p_splitter->orientation() == Qt::Horizontal ? SplitType::Vertical : SplitType::Horizontal;
+}
+
+void ViewArea::flashViewSplit(ViewSplit *p_split)
+{
+    auto tabBar = p_split->tabBar();
+    if (!tabBar) {
+        return;
+    }
+
+    // Directly set the property of ViewSplit won't work.
+    WidgetUtils::setPropertyDynamically(tabBar, PropertyDefs::c_viewSplitFlash, true);
+    QTimer::singleShot(1000, tabBar, [tabBar]() {
+                WidgetUtils::setPropertyDynamically(tabBar, PropertyDefs::c_viewSplitFlash, false);
+            });
+}
+
+void ViewArea::moveViewWindowOneSplit(ViewSplit *p_split, ViewWindow *p_win, Direction p_direction)
+{
+    bool splitCountChanged = false;
+    auto targetSplit = findSplitByDirection(p_split, p_direction);
+    if (!targetSplit) {
+        if (p_split->getViewWindowCount() == 1) {
+            // Only one ViewWindow left. Skip it.
+            return;
+        }
+
+        // Create a new split.
+        targetSplit = splitViewSplit(p_split, splitTypeOfDirection(p_direction), false);
+        if (p_direction == Direction::Left || p_direction == Direction::Up) {
+            // Need to swap the position of the two splits.
+            auto splitter = tryGetParentSplitter(targetSplit);
+            Q_ASSERT(splitter);
+            Q_ASSERT(splitter->indexOf(targetSplit) == 1);
+            splitter->insertWidget(0, targetSplit);
+        }
+        splitCountChanged = true;
+    }
+
+    // Take ViewWindow out of @p_split.
+    p_split->takeViewWindow(p_win);
+    if (p_split->getViewWindowCount() == 0) {
+        removeViewSplit(p_split, true);
+        splitCountChanged = true;
+    }
+
+    targetSplit->addViewWindow(p_win);
+
+    setCurrentViewWindow(p_win);
+
+    flashViewSplit(targetSplit);
+
+    if (splitCountChanged) {
+        emit viewSplitsCountChanged();
+    }
+}
+
+ViewArea::SplitType ViewArea::splitTypeOfDirection(Direction p_direction)
+{
+    if (p_direction == Direction::Up || p_direction == Direction::Down) {
+        return SplitType::Horizontal;
+    } else {
+        return SplitType::Vertical;
+    }
 }
